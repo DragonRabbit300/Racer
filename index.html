@@ -3,97 +3,364 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Simple Driving Simulator</title>
+<title>Racing Simulator — Checkpoints, Laps, Ghosts</title>
 <style>
-  html,body { height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:#111; color:#eee; display:flex; align-items:center; justify-content:center; }
-  #gameWrap { width:900px; max-width:95vw; background:linear-gradient(#222,#1b1b1b); padding:12px; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,0.7); }
-  canvas { display:block; background: #2b6c2b; border-radius:6px; }
-  .hud { margin-top:8px; display:flex; gap:12px; align-items:center; }
-  .panel { background:rgba(255,255,255,0.04); padding:8px 12px; border-radius:8px; font-size:14px; }
-  button { background:#0b84ff; border:0; color:white; padding:8px 12px; border-radius:6px; cursor:pointer; }
-  button:active { transform:translateY(1px); }
-  small { color:#bfcbdc; display:block; margin-top:4px; font-size:12px; }
-  .controls { font-size:13px; color:#cfe; }
+  :root{--bg:#0f1720;--panel:#0b1220;--accent:#0b84ff;--text:#e6eef8;}
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;}
+  #wrap{width:96vw; max-width:1200px; margin:18px; display:flex; gap:12px; align-items:flex-start;}
+  #game{background:linear-gradient(#0b1220,#081018); padding:12px; border-radius:10px; box-shadow:0 12px 40px rgba(0,0,0,0.7);}
+  canvas{background:#2b6c2b; display:block; border-radius:8px;}
+  .sidebar{width:320px; min-width:260px; background:var(--panel); padding:12px; border-radius:10px; box-shadow:0 10px 30px rgba(0,0,0,0.6);}
+  h2{margin:0 0 8px 0; font-size:18px;}
+  label{display:block;margin-top:8px;font-size:13px;color:#bcd;}
+  select,input[type=number]{width:100%;padding:8px;border-radius:6px;border:0;background:#071827;color:var(--text);margin-top:6px}
+  button{margin-top:10px;padding:8px 10px;border:0;border-radius:8px;background:var(--accent);color:white;cursor:pointer}
+  .hud{display:flex; gap:10px; flex-wrap:wrap; margin-top:10px}
+  .panel{background:rgba(255,255,255,0.03); padding:8px;border-radius:8px; font-size:14px}
+  .small{font-size:12px;color:#9fc}
+  .controls{font-size:13px;color:#bcd;margin-top:8px}
+  .mapPreview{height:80px;border-radius:6px;background:rgba(0,0,0,0.15); display:flex; align-items:center; justify-content:center; color:#9db; font-size:12px}
+  .raceInfo{margin-top:8px}
 </style>
 </head>
 <body>
-  <div id="gameWrap">
-    <canvas id="world" width="800" height="500"></canvas>
-    <div class="hud">
-      <div class="panel">
-        <div>Speed: <span id="speed">0</span> px/s</div>
-        <div>Angle: <span id="angle">0</span>°</div>
-        <div>Collisions: <span id="collisions">0</span></div>
+  <div id="wrap">
+    <div id="game">
+      <canvas id="c" width="1000" height="600"></canvas>
+      <div class="hud">
+        <div class="panel">Map: <strong id="mapName">-</strong><div class="small" id="mapTheme"></div></div>
+        <div class="panel">Lap: <strong id="lapDisplay">0/3</strong></div>
+        <div class="panel">Checkpoint: <strong id="cpDisplay">0/0</strong></div>
+        <div class="panel">Time: <strong id="timeDisplay">0.000</strong>s</div>
+        <div class="panel">Best: <strong id="bestDisplay">—</strong></div>
       </div>
-      <div class="panel">
-        <button id="resetBtn">Reset</button>
-        <button id="toggleMap">Toggle Mini-map</button>
-        <small class="controls">Controls: ↑ / W = accelerate, ↓ / S = brake/reverse, ← / A = steer left, → / D = steer right, R = reset</small>
+    </div>
+
+    <div class="sidebar">
+      <h2>Race Setup</h2>
+
+      <label for="mapSelect">Select Map</label>
+      <select id="mapSelect"></select>
+
+      <div class="mapPreview" id="mapPreview">Map preview</div>
+
+      <label for="laps">Laps</label>
+      <input id="laps" type="number" min="1" max="10" value="3" />
+
+      <label>Options</label>
+      <div style="display:flex;gap:8px;">
+        <button id="startBtn">Start Race</button>
+        <button id="resetBtn">Reset Car</button>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button id="toggleGhost">Toggle Ghost</button>
+        <button id="clearBest">Clear Best</button>
+      </div>
+
+      <div class="raceInfo">
+        <p class="small">Controls: ↑/W = accel, ↓/S = brake, ←/A = steer left, →/D = steer right, R = reset car</p>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <div><strong>Start Lights</strong></div>
+        <canvas id="startLights" width="120" height="24" style="display:block;margin-top:6px;border-radius:6px;background:rgba(0,0,0,0.08)"></canvas>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <div><strong>Saved Best (per map)</strong></div>
+        <div class="small" id="savedNote">Best times are saved in your browser (localStorage).</div>
       </div>
     </div>
   </div>
 
 <script>
-/* Simple top-down driving simulator
-   - Car has continuous position, velocity, angle
-   - Friction slows down
-   - Steering rotates car at speed-dependent rate
-   - Axis-aligned obstacle collision (simple response)
-*/
-
-const canvas = document.getElementById('world');
-const ctx = canvas.getContext('2d');
-
+// ---------------------- Globals ----------------------
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 
-// World objects
-const obstacles = [
-  {x:200, y:120, w:120, h:60},
-  {x:420, y:300, w:200, h:30},
-  {x:80,  y:320, w:100, h:100}
+const mapSelect = document.getElementById('mapSelect');
+const mapPreview = document.getElementById('mapPreview');
+const mapNameNode = document.getElementById('mapName');
+const mapThemeNode = document.getElementById('mapTheme');
+const lapDisplay = document.getElementById('lapDisplay');
+const cpDisplay = document.getElementById('cpDisplay');
+const timeDisplay = document.getElementById('timeDisplay');
+const bestDisplay = document.getElementById('bestDisplay');
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+const toggleGhostBtn = document.getElementById('toggleGhost');
+const clearBestBtn = document.getElementById('clearBest');
+const lapsInput = document.getElementById('laps');
+const startLightsCanvas = document.getElementById('startLights');
+const slCtx = startLightsCanvas.getContext('2d');
+
+let showGhost = true;
+
+// ---------------------- Utility / Storage ----------------------
+const lsKey = (mapId)=>`race_best_${mapId}`;
+
+// Save best run (time + ghost path)
+function saveBest(mapId, totalTime, ghostPath){
+  const data = { time: totalTime, ghost: ghostPath };
+  localStorage.setItem(lsKey(mapId), JSON.stringify(data));
+}
+function loadBest(mapId){
+  const v = localStorage.getItem(lsKey(mapId));
+  return v ? JSON.parse(v) : null;
+}
+function clearBest(mapId){
+  localStorage.removeItem(lsKey(mapId));
+}
+
+// ---------------------- Maps (5 maps) ----------------------
+// Each map has: id, name, theme, worldW/worldH, obstacles[], checkpoints[] (seq), startFinish rect
+// Coordinates in world space. We'll keep variety (street, grass, race track, maze, obstacle course)
+const maps = [
+  { id:'map1', name:'Park Loop', theme:'Street + Park', worldW:1800, worldH:1200,
+    obstacles:[
+      // sidewalks/buildings
+      {x:0,y:0,w:1800,h:40}, {x:0,y:1160,w:1800,h:40}, {x:0,y:0,w:40,h:1200}, {x:1760,y:0,w:40,h:1200},
+      {x:300,y:200,w:140,h:200}, {x:900,y:60,w:200,h:150}, {x:1200,y:700,w:250,h:200}
+    ],
+    checkpoints:[
+      {x:220,y:140,w:120,h:30,angle:0}, {x:500,y:420,w:120,h:30,angle:Math.PI/2}, {x:860,y:220,w:120,h:30,angle:0},
+      {x:1250,y:200,w:120,h:30,angle:Math.PI/2}, {x:1480,y:480,w:120,h:30,angle:Math.PI}
+    ],
+    start:{x:150,y:260,w:160,h:10,angle:0},
+    startPos:{x:150,y:300,angle:0}
+  },
+
+  { id:'map2', name:'Dirt Countryside', theme:'Grass + Dirt', worldW:2400, worldH:1400,
+    obstacles:[
+      {x:0,y:0,w:2400,h:40}, {x:0,y:1360,w:2400,h:40}, {x:0,y:0,w:40,h:1400}, {x:2360,y:0,w:40,h:1400},
+      // rocks / barns
+      {x:400,y:300,w:120,h:120}, {x:1100,y:600,w:180,h:120}, {x:1700,y:250,w:140,h:140}, {x:1900,y:900,w:200,h:150}
+    ],
+    checkpoints:[
+      {x:250,y:420,w:150,h:30,angle:0}, {x:700,y:420,w:150,h:30,angle:Math.PI/2},
+      {x:1150,y:520,w:150,h:30,angle:0}, {x:1600,y:360,w:150,h:30,angle:Math.PI/2}, {x:2100,y:700,w:150,h:30,angle:Math.PI}
+    ],
+    start:{x:200,y:480,w:160,h:10,angle:0},
+    startPos:{x:200,y:520,angle:0}
+  },
+
+  { id:'map3', name:'Grand Circuit', theme:'Race Track', worldW:3200, worldH:1600,
+    obstacles:[
+      // track walls (large outer border)
+      {x:0,y:0,w:3200,h:40}, {x:0,y:1560,w:3200,h:40}, {x:0,y:0,w:40,h:1600}, {x:3160,y:0,w:40,h:1600},
+      // inner islands to force curve
+      {x:700,y:300,w:600,h:140}, {x:1800,y:900,w:700,h:160}
+    ],
+    checkpoints:[
+      {x:460,y:470,w:180,h:20,angle:0}, {x:900,y:300,w:180,h:20,angle:Math.PI/2}, {x:1400,y:420,w:180,h:20,angle:0},
+      {x:2050,y:760,w:180,h:20,angle:Math.PI/2}, {x:2600,y:1000,w:180,h:20,angle:0}
+    ],
+    start:{x:420,y:500,w:200,h:10,angle:0},
+    startPos:{x:420,y:540,angle:0}
+  },
+
+  { id:'map4', name:'Factory Maze', theme:'Maze-style Course', worldW:2000, worldH:2000,
+    obstacles:[
+      // many walls for maze
+      {x:0,y:0,w:2000,h:40},{x:0,y:1960,w:2000,h:40},{x:0,y:0,w:40,h:2000},{x:1960,y:0,w:40,h:2000},
+      // inner maze blocks (grid-like)
+    ],
+    // we'll procedurally add maze walls
+    checkpoints: [],
+    start:{x:120,y:160,w:140,h:10,angle:0},
+    startPos:{x:120,y:200,angle:0}
+  },
+
+  { id:'map5', name:'Obstacle Gauntlet', theme:'Obstacle Course', worldW:2200, worldH:1400,
+    obstacles:[
+      {x:0,y:0,w:2200,h:40}, {x:0,y:1360,w:2200,h:40}, {x:0,y:0,w:40,h:1400}, {x:2160,y:0,w:40,h:1400},
+      // random obstacles
+      {x:400,y:200,w:100,h:100}, {x:600,y:400,w:80,h:200}, {x:900,y:240,w:220,h:50}, {x:1250,y:520,w:150,h:150},
+      {x:1550,y:250,w:200,h:80}, {x:1800,y:700,w:140,h:140}
+    ],
+    checkpoints:[
+      {x:180,y:260,w:140,h:30,angle:0}, {x:480,y:360,w:120,h:30,angle:Math.PI/2}, {x:780,y:260,w:120,h:30,angle:0},
+      {x:1180,y:460,w:120,h:30,angle:Math.PI/2}, {x:1650,y:420,w:140,h:30,angle:0}
+    ],
+    start:{x:140,y:300,w:160,h:10,angle:0},
+    startPos:{x:140,y:340,angle:0}
+  }
 ];
 
-// Car
+// Add maze interior for map4 (simple grid walls)
+(function addMaze(){
+  const m = maps.find(x=>x.id==='map4');
+  const cell = 200;
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      if((r+c)%2===0){
+        m.obstacles.push({x:80 + c*cell, y:120 + r*cell, w:cell-30, h:40});
+        m.obstacles.push({x:80 + c*cell, y:120 + r*cell + 60, w:40, h:cell-30});
+      }
+    }
+  }
+  // create checkpoints in maze corners
+  m.checkpoints = [
+    {x:160,y:220,w:120,h:20,angle:0}, {x:600,y:420,w:120,h:20,angle:Math.PI/2},
+    {x:1000,y:820,w:120,h:20,angle:0}, {x:1400,y:1420,w:120,h:20,angle:Math.PI/2}, {x:1800,y:160,w:120,h:20,angle:Math.PI}
+  ];
+})();
+
+// load map selector
+maps.forEach(m => {
+  const opt = document.createElement('option');
+  opt.value = m.id; opt.textContent = m.name + ' — ' + m.theme;
+  mapSelect.appendChild(opt);
+});
+mapSelect.value = maps[0].id;
+
+// ---------------------- Car ----------------------
 const car = {
-  x: 120,
-  y: 80,
-  angle: 0,           // radians
-  width: 28,
-  length: 48,
-  vel: 0,             // speed scalar (px per second)
-  maxSpeed: 420,
-  accel: 600,         // px/s^2
-  brake: 900,
-  friction: 400,      // px/s^2 natural friction
-  steerSpeed: Math.PI, // rad/s at full effect
-  collisions: 0
+  x:0,y:0,angle:0,
+  length:48,width:28,
+  vel:0,
+  maxSpeed:520, accel:700, brake:1100, friction:480,
+  steerSpeed: Math.PI,
+  collisions:0
 };
 
-// Input state
-const input = {
-  up:false, down:false, left:false, right:false
-};
+// Input
+const input = { up:false, down:false, left:false, right:false };
 
-let showMiniMap = true;
+// Race state
+let currentMap = maps[0];
+let worldW = currentMap.worldW, worldH = currentMap.worldH;
+let camera = {x:0,y:0};
+let checkpointIndex = 0;
+let lap = 0;
+let totalLaps = parseInt(lapsInput.value)||3;
+let running = false;
+let startedAt = 0;
+let elapsed = 0;
+let lapTimes = [];
+let lastFrame = performance.now();
+let recordedPath = []; // for ghost recording (current run)
+let bestData = loadBest(currentMap.id);
+let ghostPathBest = bestData && bestData.ghost ? bestData.ghost : null;
 
-// Time
-let last = performance.now();
+// ---------------------- Helpers ----------------------
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function now(){ return performance.now()/1000; }
+function rectContains(r,x,y){ return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
 
-// HTML HUD nodes
-const speedNode = document.getElementById('speed');
-const angleNode = document.getElementById('angle');
-const collNode  = document.getElementById('collisions');
-document.getElementById('resetBtn').onclick = reset;
-document.getElementById('toggleMap').onclick = ()=>{ showMiniMap = !showMiniMap; };
+// simple AABB intersection
+function aabbIntersect(a,b){ return !(a.x + a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h); }
 
-// Keyboard
+// ---------------------- Camera ----------------------
+function updateCamera(){
+  // center camera on car, clamp to world bounds so we don't show outside
+  camera.x = clamp(car.x - W/2, 0, Math.max(0, worldW - W));
+  camera.y = clamp(car.y - H/2, 0, Math.max(0, worldH - H));
+}
+
+// ---------------------- Race Logic ----------------------
+function startRace(){
+  // set starting values
+  checkpointIndex = 0;
+  lap = 1;
+  totalLaps = parseInt(lapsInput.value) || 3;
+  lapTimes = [];
+  recordedPath = [];
+  running = false; // will become true after countdown
+  showStartCountdown(()=>{ running = true; startedAt = now(); recordedPath = []; });
+}
+
+function endRace(){
+  running = false;
+  const totalTime = elapsed;
+  const prev = loadBest(currentMap.id);
+  // if better or none => save best + ghost
+  if(!prev || totalTime < prev.time){
+    saveBest(currentMap.id, totalTime, recordedPath);
+    ghostPathBest = recordedPath.slice();
+    bestDisplay.textContent = totalTime.toFixed(3) + 's (new!)';
+    alert('New best! ' + totalTime.toFixed(3) + 's saved for ' + currentMap.name);
+  } else {
+    bestDisplay.textContent = prev.time.toFixed(3) + 's';
+  }
+}
+
+// Called each update to test checkpoints
+function checkCheckpoints(){
+  // sequential checkpoints:
+  const cps = currentMap.checkpoints;
+  if(cps.length === 0) return;
+  const cp = cps[checkpointIndex];
+  // For simplicity, check center point of car inside checkpoint rect (no rotation)
+  if(rectContains({x:cp.x, y:cp.y, w:cp.w, h:cp.h}, car.x, car.y)){
+    checkpointIndex++;
+    // if all checkpoints passed, require start/finish to finish lap
+    if(checkpointIndex >= cps.length){
+      checkpointIndex = cps.length; // wait until crossing start line
+    }
+  }
+  // detect crossing start/finish: allow crossing only if all checkpoints passed
+  const sf = currentMap.start;
+  if(rectContains({x:sf.x, y:sf.y, w:sf.w, h:sf.h}, car.x, car.y)){
+    // crossing start/finish
+    if(checkpointIndex >= cps.length){
+      // complete lap
+      const lapTime = lap === 1 ? now() - startedAt : (now() - (startedAt + lapTimes.reduce((a,b)=>a+b,0)));
+      lapTimes.push(lapTime);
+      // record and reset index
+      checkpointIndex = 0;
+      if(lap >= totalLaps){
+        // finished race
+        elapsed = now() - startedAt;
+        endRace();
+      } else {
+        lap++;
+      }
+    }
+  }
+}
+
+// ---------------------- Start lights / countdown ----------------------
+let countdownActive = false;
+function showStartCountdown(cb){
+  countdownActive = true;
+  let seq = [ '3', '2', '1', 'GO' ];
+  let i = 0;
+  function tick(){
+    drawStartLights(seq[i]);
+    i++;
+    if(i < seq.length) setTimeout(tick, 750);
+    else { setTimeout(()=>{
+      drawStartLights(null);
+      countdownActive = false;
+      if(cb) cb();
+    }, 250); }
+  }
+  tick();
+}
+
+function drawStartLights(text){
+  const sctx = slCtx;
+  sctx.clearRect(0,0,startLightsCanvas.width,startLightsCanvas.height);
+  sctx.fillStyle = 'rgba(255,255,255,0.03)';
+  sctx.fillRect(0,0,startLightsCanvas.width,startLightsCanvas.height);
+  sctx.font = '16px sans-serif';
+  sctx.fillStyle = '#cfe';
+  if(text){
+    sctx.textAlign = 'center';
+    sctx.fillText(text, startLightsCanvas.width/2, startLightsCanvas.height/2 + 6);
+  }
+}
+
+// ---------------------- Controls ----------------------
 window.addEventListener('keydown', e=>{
   const k = e.key.toLowerCase();
   if(k==='arrowup' || k==='w') input.up = true;
   if(k==='arrowdown' || k==='s') input.down = true;
   if(k==='arrowleft' || k==='a') input.left = true;
   if(k==='arrowright' || k==='d') input.right = true;
-  if(k==='r') reset();
+  if(k==='r') resetCar();
 });
 window.addEventListener('keyup', e=>{
   const k = e.key.toLowerCase();
@@ -103,94 +370,64 @@ window.addEventListener('keyup', e=>{
   if(k==='arrowright' || k==='d') input.right = false;
 });
 
-// Helper
-function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
-
-// Main loop
-function loop(t){
-  const dt = Math.min(0.05, (t - last)/1000); // cap dt to avoid jumps
-  last = t;
-  update(dt);
-  render();
-  requestAnimationFrame(loop);
-}
-
-// Physics update
-function update(dt){
-  // Acceleration / braking
+// ---------------------- Physics ----------------------
+function physics(dt){
+  // acceleration / braking
   if(input.up){
     car.vel += car.accel * dt;
   } else if(input.down){
     car.vel -= car.brake * dt;
   } else {
-    // natural friction
-    if(car.vel > 0) {
-      car.vel -= car.friction*dt;
+    // friction
+    if(car.vel > 0){
+      car.vel -= car.friction * dt;
       if(car.vel < 0) car.vel = 0;
-    } else if(car.vel < 0) {
-      car.vel += car.friction*dt;
+    } else if(car.vel < 0){
+      car.vel += car.friction * dt;
       if(car.vel > 0) car.vel = 0;
     }
   }
-
-  // clamp speed
-  car.vel = clamp(car.vel, -car.maxSpeed*0.5, car.maxSpeed);
-
-  // Steering effectiveness reduced at very low speeds
+  car.vel = clamp(car.vel, -car.maxSpeed*0.6, car.maxSpeed);
   const speedFactor = clamp(Math.abs(car.vel) / car.maxSpeed, 0, 1);
-  const steerEffect = 1 - Math.exp(-3*speedFactor); // ramps up with speed
-
-  // Steering direction: reverse steering steers opposite if going backward
+  const steerEffect = 1 - Math.exp(-3*speedFactor);
   const steerDir = (car.vel >= 0) ? 1 : -1;
-  if(input.left){
-    car.angle -= car.steerSpeed * steerEffect * dt * steerDir;
-  }
-  if(input.right){
-    car.angle += car.steerSpeed * steerEffect * dt * steerDir;
-  }
+  if(input.left) car.angle -= car.steerSpeed * steerEffect * dt * steerDir;
+  if(input.right) car.angle += car.steerSpeed * steerEffect * dt * steerDir;
 
-  // Integrate position
   const dx = Math.cos(car.angle) * car.vel * dt;
   const dy = Math.sin(car.angle) * car.vel * dt;
-  car.x += dx;
-  car.y += dy;
+  car.x += dx; car.y += dy;
 
-  // World bounds collision: simple clamp + bounce reduction
+  // bound to world
+  const halfL = car.length/2, halfW = car.width/2;
   let collided = false;
-  const halfW = car.length/2, halfH = car.width/2;
-  if(car.x < halfW){ car.x = halfW; car.vel *= -0.25; collided = true; }
-  if(car.x > W - halfW){ car.x = W - halfW; car.vel *= -0.25; collided = true; }
-  if(car.y < halfW){ car.y = halfW; car.vel *= -0.25; collided = true; }
-  if(car.y > H - halfW){ car.y = H - halfW; car.vel *= -0.25; collided = true; }
+  if(car.x < halfL){ car.x = halfL; car.vel *= -0.25; collided = true; }
+  if(car.x > worldW - halfL){ car.x = worldW - halfL; car.vel *= -0.25; collided = true; }
+  if(car.y < halfL){ car.y = halfL; car.vel *= -0.25; collided = true; }
+  if(car.y > worldH - halfL){ car.y = worldH - halfL; car.vel *= -0.25; collided = true; }
 
-  // Obstacle collisions (approximate by AABB on car's bounding box)
-  // Build axis-aligned bounding box around rotated car (approximation)
-  const carBBox = getCarAABB();
-
-  for(const ob of obstacles){
-    if(aabbIntersect(carBBox, ob)){
-      // On collision, push car away along smallest penetration axis
-      const pen = getPenetration(carBBox, ob);
-      if(Math.abs(pen.x) < Math.abs(pen.y)){
-        car.x += pen.x;
-      } else {
-        car.y += pen.y;
-      }
-      car.vel *= -0.35; // lose speed and bounce a bit
+  // obstacles collisions: approximate with car AABB
+  const aabb = getCarAABB();
+  for(const ob of currentMap.obstacles){
+    if(aabbIntersect(aabb, ob)){
+      // push out along smaller penetration
+      const pen = getPenetration(aabb, ob);
+      if(Math.abs(pen.x) < Math.abs(pen.y)) car.x += pen.x;
+      else car.y += pen.y;
+      car.vel *= -0.4;
       collided = true;
     }
   }
+  if(collided) car.collisions++;
 
-  if(collided){ car.collisions++; }
-
-  // Update HUD
-  speedNode.textContent = Math.round(car.vel);
-  angleNode.textContent = Math.round((car.angle * 180/Math.PI) % 360);
-  collNode.textContent = car.collisions;
+  // record path for current run if running
+  if(running){
+    recordedPath.push({x:car.x,y:car.y,angle:car.angle,t:now()-startedAt || 0});
+  }
 }
 
+// car bounding box from rotated rect
 function getCarAABB(){
-  // compute four corners of the car rectangle and make AABB
   const l = car.length, w = car.width;
   const cos = Math.cos(car.angle), sin = Math.sin(car.angle);
   const hx = l/2, hy = w/2;
@@ -201,155 +438,259 @@ function getCarAABB(){
     {x: car.x + cos* hx + sin* hy, y: car.y + sin* hx - cos* hy}
   ];
   const xs = corners.map(p=>p.x), ys = corners.map(p=>p.y);
-  const minx = Math.min(...xs), maxx = Math.max(...xs);
-  const miny = Math.min(...ys), maxy = Math.max(...ys);
-  return {x:minx,y:miny,w:maxx-minx,h:maxy-miny};
+  return {x:Math.min(...xs), y:Math.min(...ys), w:Math.max(...xs)-Math.min(...xs), h:Math.max(...ys)-Math.min(...ys)};
 }
-
-function aabbIntersect(a,b){
-  return !(a.x + a.w < b.x || a.x > b.x + b.w || a.y + a.h < b.y || a.y > b.y + b.h);
-}
-
 function getPenetration(a,b){
-  // returns minimal translation vector to separate a from b (approx)
   const axc = a.x + a.w/2, ayc = a.y + a.h/2;
   const bxc = b.x + b.w/2, byc = b.y + b.h/2;
-  const dx = axc - bxc;
-  const dy = ayc - byc;
+  const dx = axc - bxc, dy = ayc - byc;
   const px = (a.w + b.w)/2 - Math.abs(dx);
   const py = (a.h + b.h)/2 - Math.abs(dy);
-  if(px < py){
-    return {x: dx > 0 ? px : -px, y:0};
-  } else {
-    return {x:0, y: dy > 0 ? py : -py};
-  }
+  if(px < py) return {x: dx>0 ? px : -px, y:0};
+  else return {x:0, y: dy>0 ? py : -py};
 }
 
-// Rendering
+// ---------------------- Rendering ----------------------
 function render(){
+  // clear
   ctx.clearRect(0,0,W,H);
+  // background by theme
+  if(currentMap.theme.includes('Grass') || currentMap.theme.includes('Dirt')){
+    ctx.fillStyle = '#2f5b32';
+  } else if(currentMap.theme.includes('Race')){
+    ctx.fillStyle = '#1e2b36';
+  } else if(currentMap.theme.includes('Maze')){
+    ctx.fillStyle = '#2b2b2b';
+  } else {
+    ctx.fillStyle = '#2b6c2b';
+  }
+  ctx.fillRect(0,0,W,H);
 
-  // draw ground grid (simple)
+  // world transform (camera)
+  ctx.save();
+  ctx.translate(-camera.x, -camera.y);
+
+  // draw ground grid (subtle)
   drawGrid();
 
   // draw obstacles
   ctx.fillStyle = '#6b4b3b';
-  for(const ob of obstacles){
+  for(const ob of currentMap.obstacles){
     roundRect(ctx, ob.x, ob.y, ob.w, ob.h, 6);
     ctx.fill();
   }
 
-  // draw car: rotated rectangle + simple windows/stripe
+  // draw checkpoints (sequence)
+  currentMap.checkpoints.forEach((cp, idx) => {
+    ctx.save();
+    ctx.translate(cp.x + cp.w/2, cp.y + cp.h/2);
+    ctx.rotate(cp.angle || 0);
+    if(idx < checkpointIndex) ctx.globalAlpha = 0.35;
+    drawCheckpointRect(ctx, -cp.w/2, -cp.h/2, cp.w, cp.h);
+    ctx.restore();
+  });
+
+  // start/finish
+  const sf = currentMap.start;
   ctx.save();
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
-  // body
-  ctx.fillStyle = '#e23f3f';
-  roundRect(ctx, -car.length/2, -car.width/2, car.length, car.width, 4);
-  ctx.fill();
-  // stripe
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-car.length/6, -car.width/5, car.length/3, car.width/2.5);
-  // front indicator
-  ctx.fillStyle = '#ffd868';
-  ctx.fillRect(car.length/2 - 6, -car.width/6, 6, car.width/3);
+  ctx.translate(sf.x + sf.w/2, sf.y + sf.h/2);
+  ctx.rotate(sf.angle || 0);
+  drawStartFinish(ctx, -sf.w/2, -sf.h/2, sf.w, sf.h);
   ctx.restore();
 
-  // draw a simple shadow under car
+  // draw ghost (best) path
+  if(showGhost && ghostPathBest){
+    drawGhostPath(ghostPathBest);
+  }
+
+  // draw car shadow then car
   ctx.beginPath();
-  ctx.ellipse(car.x, car.y + car.width, car.length*0.5, car.width*0.6, 0, 0, Math.PI*2);
-  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.ellipse(car.x, car.y + car.width, car.length*0.6, car.width*0.9, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,0,0,0.14)';
   ctx.fill();
 
-  // mini-map
-  if(showMiniMap){
-    drawMiniMap();
-  } else {
-    // draw small hint
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.fillRect(W-160, H-80, 150, 60);
-    ctx.fillStyle = '#fff';
-    ctx.font = '12px sans-serif';
-    ctx.fillText('Mini-map hidden. Click Toggle Mini-map.', W-150, H-50);
-  }
+  drawCar(ctx, car);
+
+  ctx.restore();
+
+  // HUD info updated externally
 }
 
+// drawing helpers
 function drawGrid(){
-  const size = 40;
+  const size = 80;
   ctx.save();
-  ctx.globalAlpha = 0.12;
+  ctx.globalAlpha = 0.08;
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1;
-  for(let x=0;x<=W;x+=size){
-    ctx.beginPath();
-    ctx.moveTo(x,0);
-    ctx.lineTo(x,H);
-    ctx.stroke();
+  for(let x=0;x<=worldW;x+=size){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,worldH); ctx.stroke();
   }
-  for(let y=0;y<=H;y+=size){
-    ctx.beginPath();
-    ctx.moveTo(0,y);
-    ctx.lineTo(W,y);
-    ctx.stroke();
+  for(let y=0;y<=worldH;y+=size){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(worldW,y); ctx.stroke();
   }
   ctx.restore();
 }
-
-function drawMiniMap(){
-  const mw = 150, mh = 90;
-  const mx = W - mw - 8, my = H - mh - 8;
-  // background
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  roundRect(ctx, mx, my, mw, mh, 8);
-  ctx.fill();
-
-  // scale world to minimap (simple 1: scale)
-  const sx = mw / W, sy = mh / H;
-
-  // obstacles
+function drawCheckpointRect(ctx, x,y,w,h){
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#ffd700';
+  ctx.fillStyle = 'rgba(255,215,0,0.06)';
+  roundRect(ctx, x, y, w, h, 6);
+  ctx.fill(); ctx.stroke();
+}
+function drawStartFinish(ctx, x,y,w,h){
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  roundRect(ctx, x, y, w, h, 4);
+  ctx.fill(); ctx.stroke();
+  // draw checkered stripes
   ctx.save();
-  ctx.translate(mx, my);
-  ctx.scale(sx, sy);
-  ctx.fillStyle = '#b36b4b';
-  for(const ob of obstacles){
-    ctx.fillRect(ob.x+1, ob.y+1, ob.w-2, ob.h-2);
+  ctx.translate(x,y);
+  const step = 8;
+  for(let i=0;i<w;i+=step){
+    if((i/step) % 2 === 0){
+      ctx.fillStyle = '#fff'; ctx.fillRect(i,0,step,h/2);
+      ctx.fillStyle = '#000'; ctx.fillRect(i,h/2,step,h/2);
+    } else {
+      ctx.fillStyle = '#000'; ctx.fillRect(i,0,step,h/2);
+      ctx.fillStyle = '#fff'; ctx.fillRect(i,h/2,step,h/2);
+    }
   }
-  // car as triangle on mini-map
-  ctx.translate(car.x, car.y);
-  ctx.rotate(car.angle);
-  ctx.beginPath();
-  ctx.moveTo(10,0);
-  ctx.lineTo(-6,6);
-  ctx.lineTo(-6,-6);
-  ctx.closePath();
-  ctx.fillStyle = '#ffeb3b';
+  ctx.restore();
+}
+function drawCar(ctx, c){
+  ctx.save();
+  ctx.translate(c.x, c.y);
+  ctx.rotate(c.angle);
+  // body
+  ctx.fillStyle = '#e23f3f';
+  roundRect(ctx, -c.length/2, -c.width/2, c.length, c.width, 4);
   ctx.fill();
-
+  // stripe
+  ctx.fillStyle = '#111';
+  ctx.fillRect(-c.length/6, -c.width/5, c.length/3, c.width/2.5);
+  // front indicator
+  ctx.fillStyle = '#ffd868';
+  ctx.fillRect(c.length/2 - 6, -c.width/6, 6, c.width/3);
+  ctx.restore();
+}
+function drawGhostPath(path){
+  if(!path || path.length < 2) return;
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffe066';
+  ctx.beginPath();
+  ctx.moveTo(path[0].x, path[0].y);
+  for(let i=1;i<path.length;i++){
+    ctx.lineTo(path[i].x, path[i].y);
+  }
+  ctx.stroke();
+  // small moving ghost car marker (progress by time)
+  const t = elapsed || (path[path.length-1].t || 0);
+  const total = path[path.length-1].t;
+  const pct = total ? clamp((t % total)/total,0,1) : 0;
+  const idx = Math.floor(pct * (path.length-1));
+  if(path[idx]){
+    const p = path[idx];
+    ctx.save();
+    ctx.translate(p.x, p.y); ctx.rotate(p.angle);
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#ffeb3b';
+    ctx.beginPath();
+    ctx.moveTo(10,0); ctx.lineTo(-6,6); ctx.lineTo(-6,-6); ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.restore();
 }
 
-function roundRect(ctx, x, y, w, h, r){
+// rounded rect helper
+function roundRect(ctx,x,y,w,h,r){
   ctx.beginPath();
-  ctx.moveTo(x+r, y);
-  ctx.arcTo(x+w, y, x+w, y+h, r);
-  ctx.arcTo(x+w, y+h, x, y+h, r);
-  ctx.arcTo(x, y+h, x, y, r);
-  ctx.arcTo(x, y, x+w, y, r);
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
   ctx.closePath();
 }
 
-// Reset to start
-function reset(){
-  car.x = 120;
-  car.y = 80;
-  car.angle = 0;
-  car.vel = 0;
-  car.collisions = 0;
+// ---------------------- Update loop ----------------------
+function updateFrame(t){
+  const dt = Math.min(0.05, (t - lastFrame)/1000);
+  lastFrame = t;
+  // update physics if not in countdown
+  if(!countdownActive){
+    if(running) physics(dt);
+    updateCamera();
+    if(running) checkCheckpoints();
+    // update elapsed time
+    if(running) elapsed = now() - startedAt;
+    // HUD
+    lapDisplay.textContent = running ? `${lap}/${totalLaps}` : `—/${totalLaps}`;
+    cpDisplay.textContent = `${Math.min(currentMap.checkpoints.length, checkpointIndex)}/${currentMap.checkpoints.length}`;
+    timeDisplay.textContent = running ? elapsed.toFixed(3) : (elapsed ? elapsed.toFixed(3) : '0.000');
+    const best = loadBest(currentMap.id);
+    bestDisplay.textContent = best ? best.time.toFixed(3) + 's' : '—';
+  }
+  render();
+  requestAnimationFrame(updateFrame);
+}
+let lastFrame = performance.now();
+requestAnimationFrame(updateFrame);
+
+// ---------------------- UI Bindings ----------------------
+mapSelect.addEventListener('change', ()=>{
+  const id = mapSelect.value;
+  currentMap = maps.find(m=>m.id===id);
+  worldW = currentMap.worldW; worldH = currentMap.worldH;
+  // set car to start pos
+  car.x = currentMap.startPos.x; car.y = currentMap.startPos.y; car.angle = currentMap.startPos.angle || 0; car.vel = 0;
+  camera.x = clamp(car.x - W/2, 0, Math.max(0, worldW - W));
+  camera.y = clamp(car.y - H/2, 0, Math.max(0, worldH - H));
+  checkpointIndex = 0; lap = 0; elapsed = 0;
+  mapNameNode.textContent = currentMap.name;
+  mapThemeNode.textContent = currentMap.theme;
+  ghostPathBest = (loadBest(currentMap.id) && loadBest(currentMap.id).ghost) ? loadBest(currentMap.id).ghost : null;
+  // preview text
+  mapPreview.textContent = currentMap.name + ' — ' + currentMap.theme;
+  bestDisplay.textContent = loadBest(currentMap.id) ? loadBest(currentMap.id).time.toFixed(3) + 's' : '—';
+});
+
+startBtn.addEventListener('click', ()=>{
+  // reset state to prepare
+  checkpointIndex = 0; lap = 1; elapsed = 0; recordedPath = [];
+  car.x = currentMap.startPos.x; car.y = currentMap.startPos.y; car.angle = currentMap.startPos.angle || 0; car.vel = 0;
+  updateCamera();
+  startRace();
+});
+resetBtn.addEventListener('click', ()=>{ resetCar(); });
+toggleGhostBtn.addEventListener('click', ()=>{ showGhost = !showGhost; toggleGhostBtn.textContent = showGhost ? 'Ghost: ON' : 'Ghost: OFF'; });
+clearBestBtn.addEventListener('click', ()=>{
+  if(confirm('Clear best time and ghost for this map?')){ clearBest(currentMap.id); ghostPathBest = null; bestDisplay.textContent = '—'; alert('Cleared.'); }
+});
+
+// initial load
+(function init(){
+  mapSelect.dispatchEvent(new Event('change'));
+  toggleGhostBtn.textContent = showGhost ? 'Ghost: ON' : 'Ghost: OFF';
+})();
+
+// ---------------------- Reset Car ----------------------
+function resetCar(){
+  car.x = currentMap.startPos.x; car.y = currentMap.startPos.y; car.angle = currentMap.startPos.angle || 0; car.vel = 0; car.collisions = 0;
+  updateCamera();
 }
 
-// Start loop
-reset();
-requestAnimationFrame(loop);
+// expose reset for button binding
+resetBtn.onclick = resetCar;
+
+// ---------------------- Misc: save ghost on finish: already in endRace ----------------------
+
+// ---------------------- draw simple map preview (optional small canvas) ----------------------
+// (Already using text preview; could expand with mini-canvas if desired)
 
 </script>
 </body>
